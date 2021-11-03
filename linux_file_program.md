@@ -1,6 +1,7 @@
 #linux系统下的文件编程
 ##本内容是自己学习的笔记，主要内容参考与 朱文伟 李建英 著的书籍《linux C与C++ 一线开发实践》
 ***
+##C语言下的文件编程
 <pre style="background:#222;color:#fff">
 文件描述符
 一个进程启动时，默认会打开三个文件 标准输入 标准输出 标准错误
@@ -94,5 +95,141 @@ fcntl
 #include<unistd.h>
 #include<fcntl.h>
 int fcntl(int fd,int cmd, struct flock *lock)
+cmd可以是
+F_GETLK:根据lock描述，决定是否上文件锁（或者记录所）
+F_SETLK:设置lock描述的文件锁（或记录锁）
+fcntl默认的是建议锁  如果想在linux中使用强制锁需要在root权限下
+通过mount命令-o mand选项打开该机制
+struct flock
+{
+	short int l_type;//锁定的状态
+	short int l_whence;//决定l_start的位置
+	off_t l_start;//锁定区域的开头位置
+	off_t l_len;//锁定区域的大小
+	off_t l_pid;//锁定动作的进程
+};
+l_type:F_RDLCK共享锁（读写锁）只读用  多个进程可以同时建立读取锁
+F_WRLCK:独占锁（写入锁） 在任何时刻只能有一个进程建立写入锁
+F_UNLCK：解除锁定
+l_whence:
+SEEK_SET:文件开始位置
+SEEK_CUR:文件当前位置
+SEEK_END;文件末尾位置
+l_start:
+l_len:加锁的长度 0为到文件末尾
+l_pid:当前操作文件的进程ID号
 
+加强制锁
+df -hT 查看硬盘信息
+-T选项表示查看文件系统类型 
+
+##尚待跟进
+
+4.11建立文件和内存映射
+文件和内存映射--将普通文件映射到内存中，普通文件被映射到进程地址空间后，进程可以像访问普通内存一样对文件进行访问，不必在调用read或write等操作
+void *mmap(void *start,size_t length,int prot,int flags,int fd,off_t offset);
+参数start为映射区的起始位置通常为NULL（0）表示有系统自己决定映射到什么地址；length表示映射数据的长度
+即文件需要映射到内存中的数据的大小 prot表示映射区保护方式，取以下某个值或者他们的组合
+PROT_EXEC:映射区可被执行
+PROT_READ:映射区可读取
+PROT_WRITE:映射区可写入
+PROT_NONO:映射区不可访问
+具体参数可以通过man文档进行查看 man mmap
+mmap()映射后，让用户程序直接访问设备内存  相比较在用户空间和内核空间相互复制数据，效率更高，在要求高性能的应用中比较常用 mmap映射内存必须是页面大小的整数倍，面向流的设备不能进行mmap  mmap的实现和硬件有关
+</pre>
+***
+##C++方式下的文件IO编程
+<pre style="background:#222;color:#fff">
+1：打开文件
+#include<fstream> 可读可写
+#include<ifstream>从文件读取信息
+#include<ofstream>向文件写入信息
+void open(const char* filename,IOS::openmode mode);
+mode:
+ios::app 追加模式  所有写入都追加到文件末尾
+ios:ate  文件打开后定位到文件末尾
+ios:in   打开文件用于读取
+ios:out 打开文件用于写入
+ios::trunc  如果该文件已经存在，其内容将在打开文件之前被截断 即把文本长度设为0
+等
+可以几个组合使用
+ofstream --> ios::out | ios::trunc
+ifstream --> ios:in
+fstream --> ios::in | ios::out
+
+bool is_open() 该函数返回一个bool值 true表示文件已经打开  false表示失败
+
+2：关闭文件
+void close(); 是fstream  istream ostream 的成员函数
+
+3：写入文件
+使用ofstream <<      fstream<<
+为了防止文件被覆盖需要先判断文件是否存在
+
+#include <sys/stat.h>
+#include <unistd.h>
+#include <string>
+#include <fstream>
+
+inline bool exists_test0 (const std::string& name) {
+    ifstream f(name.c_str());
+    return f.good();
+}
+
+inline bool exists_test1 (const std::string& name) {
+    if (FILE *file = fopen(name.c_str(), "r")) {
+        fclose(file);
+        return true;
+    } else {
+        return false;
+    }   
+}
+
+inline bool exists_test2 (const std::string& name) {
+    return ( access( name.c_str(), F_OK ) != -1 );
+}
+
+inline bool exists_test3 (const std::string& name) {
+  struct stat buffer;   
+  return (stat (name.c_str(), &buffer) == 0); 
+}
+
+# Results for total time to run the 100,000 calls averaged over 5 runs,
+
+Method exists_test0 (ifstream): **0.485s**
+Method exists_test1 (FILE fopen): **0.302s**
+Method exists_test2 (posix access()): **0.202s**
+Method exists_test3 (posix stat()): **0.134s**
+摘自--CSDN--guotianqing
+链接：https://blog.csdn.net/guotianqing/article/details/100766120
+
+4:读取文件
+istream >>   fstream >>
+
+5:文件偏移位置
+ostream& seekp(streampos pos);
+ostream& seekp(streamoff off,ios::seek_dir dir);
+istream& seekg(streampos pos);
+istream& seekg(streamoff off,ios::seek_dir dir);
+pos表示新的文件流指针位置值  off表示需要偏移的值 dir表示搜索的起始位置
+dir:ios::beg  开始   ios::cur当前   ios::end 末尾
+
+文件指针是一个整数值 指定了从文件的起始位置到指针所在位置的字节数 
+fileObject.seekg(n) 定位到fileObject的第n个字节（ios::beg)
+fileObject.seekg(n,ios::cur);将读指针从当前位置向后移动了n个字节
+fileObject.seekg(n,ios::end) 将文件读指针从fileObject的末尾往回移动n个字节
+fileObject.seekg(0,ios::end)定位到fileObject的末尾
+
+5:状态标志符的验证
+都是成员函数
+bool bad()
+如果读写过程中有错，就返回true
+bool fail() :格式错误时也会返回true
+bool eof(); 文件到达文件末尾时 返回true
+bool good () 如果调用以上任何一个返回true此函数返回false
+clear() 重置所有成员函数所检查的状态标志
+
+6：读写文件数据块
+ostream& write(char*buffer,streamsize size)
+istream& read(char*buffer,streamsize size);
 </pre>
